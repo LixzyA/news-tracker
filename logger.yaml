@@ -1,0 +1,22 @@
+version: 1
+formatters:
+  brief:
+    format: "%(asctime)s - %(levelname)s - %(message)s"
+  detailed:
+    format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+handlers:
+  console:
+    class: logging.StreamHandler
+    formatter: brief
+    level: INFO
+    stream: ext://sys.stdout
+  file:
+    class: logging.handlers.RotatingFileHandler
+    formatter: detailed
+    level: DEBUG
+    filename: log/news_tracker.log
+    maxBytes: 1048576  # 1MB
+    backupCount: 5
+root:
+  level: DEBUG
+  handlers: [console, file]

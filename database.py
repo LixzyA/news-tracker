@@ -5,7 +5,9 @@ from sqlalchemy.types import Date, Integer
 import datetime
 from dotenv import load_dotenv
 import os
+from logger import setup_logger
 
+logger = setup_logger(__name__)
 load_dotenv()
 
 DB_USER = os.getenv("DB_USER")
@@ -52,18 +54,21 @@ def query_news(link: str) -> News | None:
     with Session(engine) as session:
         news_list = session.query(News).where(News.link == link).first()
         if news_list:
+            logger.info(f"Queried news with link '{link}' found in database.")
             return news_list
     return None
 
 def insert_news(news: dict, source: str, classified_data: dict):
+    logger.debug(f"Inserting news with title '{news['title']}' into database.")
     with Session(engine) as session:
         try:
-            print(type(classified_data))
+            
             classified_info = ClassifiedNews(
                 is_impactful= classified_data["is_highly_impactful"],
                 confidence= classified_data["confidence"],
                 reason= classified_data["reasoning"]
             )
+            logger.debug(f"Classified info: {classified_info}")
 
             new_article = News(
                 title=news["title"],
@@ -77,8 +82,9 @@ def insert_news(news: dict, source: str, classified_data: dict):
             session.add(new_article)
 
             session.commit()
+            logger.debug(f"News with title '{news['title']}' inserted successfully.")
             return {"status": "success", "message": "News inserted successfully"}
         except Exception as e:
             session.rollback()
-            print(e)
+            logger.error(f"Error occurred while inserting news: {e}")
             return {"status": "error", "message": str(e)}
