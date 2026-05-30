@@ -17,15 +17,6 @@ handlers:
     filename: log/news_tracker.log
     maxBytes: 1048576  # 1MB
     backupCount: 5
-# loggers:
-#   news_tracker:
-#     level: DEBUG
-#     handlers: [console, file]
-#     propagate: no
-#   database:
-#     level: DEBUG
-#     handlers: [console, file]
-#     propagate: no
 root:
   level: DEBUG
   handlers: [console, file]
