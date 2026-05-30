@@ -13,7 +13,7 @@ load_dotenv()
 DB_USER = os.getenv("user")
 DB_PASSWORD = os.getenv("password")
 DB_HOST = os.getenv("host")
-DB_PORT = os.getenv("port")
+DB_PORT = int(os.getenv("port", 5432))
 DB_NAME = os.getenv("dbname")
 POOL_SIZE = 5
 MAX_OVERFLOW = 10
