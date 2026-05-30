@@ -90,8 +90,73 @@ def send_email(subject: str, body: str, to: str | list[str]):
     except Exception as e:
         logger.error(f"Failed to send email: {e}")
 
+def build_email_body(important_news: list[tuple[dict, dict]]) -> str:
+    """Build a beautiful HTML email body from classified important news items."""
+    cards = ""
+    for item, classified in important_news:
+        confidence_pct = round(classified["confidence"] * 100)
+        reasoning = classified["reasoning"]
+        content_snippet = item.get("contentSnippet", "")
+        # Truncate snippet for email preview
+        if len(content_snippet) > 200:
+            content_snippet = content_snippet[:200] + "…"
+        image_url = item.get("image", {}).get("small", "")
+        date_str = item.get("isoDate", "").split("T")[0]
+
+        cards += f"""
+        <div style="background:#fff;border-radius:12px;border:1px solid #e5e7eb;padding:20px;margin-bottom:16px;box-shadow:0 1px 3px rgba(0,0,0,0.06);">
+            <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">
+                <tr>
+                    <td style="width:80px;vertical-align:top;padding-right:16px;">
+                        <img src="{image_url}" alt="" width="80" height="80" style="border-radius:8px;width:80px;height:80px;object-fit:cover;" />
+                    </td>
+                    <td style="vertical-align:top;">
+                        <div style="display:inline-block;background:#dbeafe;color:#1d4ed8;font-size:11px;font-weight:600;padding:2px 8px;border-radius:4px;margin-bottom:6px;">{item.get("source", "")}</div>
+                        <div style="display:inline-block;background:{'#dcfce7' if confidence_pct >= 70 else '#fef9c3'};color:{'#15803d' if confidence_pct >= 70 else '#a16207'};font-size:11px;font-weight:600;padding:2px 8px;border-radius:4px;margin-bottom:6px;margin-left:4px;">{confidence_pct}% confidence</div>
+                        <h3 style="margin:0 0 4px;font-size:16px;line-height:1.4;"><a href="{item['link']}" style="color:#111827;text-decoration:none;">{item['title']}</a></h3>
+                        <p style="margin:0 0 4px;font-size:13px;color:#6b7280;line-height:1.5;">{content_snippet}</p>
+                        <p style="margin:0;font-size:12px;color:#9ca3af;">{date_str}</p>
+                    </td>
+                </tr>
+            </table>
+            <div style="margin-top:12px;padding-top:12px;border-top:1px solid #f3f4f6;">
+                <p style="margin:0;font-size:13px;color:#4b5563;line-height:1.5;"><strong style="color:#374151;">Why it matters:</strong> {reasoning}</p>
+            </div>
+        </div>"""
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"/></head>
+<body style="margin:0;padding:0;background-color:#f3f4f6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;">
+    <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#f3f4f6;padding:24px 0;">
+        <tr><td align="center">
+            <table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;">
+                <tr>
+                    <td style="background:linear-gradient(135deg,#1e3a5f,#2563eb);border-radius:16px 16px 0 0;padding:28px 24px;text-align:center;">
+                        <h1 style="margin:0 0 4px;font-size:22px;color:#ffffff;font-weight:700;">📈 Daily Market Impact</h1>
+                        <p style="margin:0;font-size:14px;color:#bfdbfe;">AI-classified news likely to impact the stock market</p>
+                    </td>
+                </tr>
+                <tr>
+                    <td style="background:#ffffff;padding:24px;">
+                        <p style="margin:0 0 16px;font-size:14px;color:#374151;">Found <strong>{len(important_news)}</strong> highly impactful news article{'s' if len(important_news) > 1 else ''} today:</p>
+                        {cards}
+                    </td>
+                </tr>
+                <tr>
+                    <td style="background:#f9fafb;border-radius:0 0 16px 16px;padding:16px 24px;text-align:center;border-top:1px solid #e5e7eb;">
+                        <p style="margin:0;font-size:12px;color:#9ca3af;">This email was generated automatically by News Tracker — AI-classified market impact analysis.</p>
+                    </td>
+                </tr>
+            </table>
+        </td></tr>
+    </table>
+</body>
+</html>"""
+
+
 def main():
-    important_news = []
+    important_news: list[tuple[dict, dict]] = []
     for source in NewsSource:
         logger.info(f"Fetching news from {source.value}...")
         raw_data = get_news(source)
@@ -111,15 +176,15 @@ def main():
                 continue
             classified_result = classify_news(item)
             if classified_result.get("is_highly_impactful"):
-                important_news.append(item)
+                important_news.append((item, classified_result))
             insert_news(item, source=source.value, classified_data=classified_result)
     targets = ['felix.antony168@gmail.com']
     if important_news:
+        email_body = build_email_body(important_news)
         send_email(
-            subject="Daily Stock Market Impactful News",
-            body = "<h1>Here are the news that are classified as highly impactful to the stock market:</h1>" + 
-                "".join([f"<p><a href='{news['link']}'>{news['title']}</a></p>" for news in important_news]),
-            to = targets
+            subject=f"Daily Stock Market Impactful News — {len(important_news)} article{'s' if len(important_news) > 1 else ''}",
+            body=email_body,
+            to=targets
         )
     
 
