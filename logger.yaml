@@ -17,6 +17,18 @@ handlers:
     filename: log/news_tracker.log
     maxBytes: 1048576  # 1MB
     backupCount: 5
+loggers:
+  watchfiles:
+    level: WARNING
+    handlers: [console, file]
+  uvicorn:
+    level: WARNING
+    handlers: [console, file]
+    propagate: no
+  uvicorn.access:
+    level: WARNING
+    handlers: [console, file]
+    propagate: no
 root:
   level: DEBUG
   handlers: [console, file]
