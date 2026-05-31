@@ -1,5 +1,5 @@
 from enum import Enum
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, EmailStr, field_validator
 
 class NewsSource(Enum):
     CNBC = "cnbc-news"
@@ -19,3 +19,11 @@ class ClassifiedNews(BaseModel):
         if v < 0 or v > 1:
             raise ValueError(f"Confidence must be between 0 and 1, got {v}")
         return v
+
+class SubscribeRequest(BaseModel):
+    email: EmailStr
+
+
+class MessageResponse(BaseModel):
+    status: str
+    message: str

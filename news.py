@@ -1,11 +1,13 @@
+from contextlib import asynccontextmanager
 import json
+from fastapi import FastAPI
 import requests
 from model import ClassifiedNews, NewsSource
-from database import query_news, insert_news
+from database import query_news, insert_news, get_active_subscribers
 from huggingface_hub import InferenceClient
 from logger import setup_logger
 import resend
-import time
+import asyncio
 
 import os
 from dotenv import load_dotenv
@@ -90,7 +92,7 @@ def send_email(subject: str, body: str, to: str | list[str]):
     except Exception as e:
         logger.error(f"Failed to send email: {e}")
 
-def build_email_body(important_news: list[tuple[dict, dict]]) -> str:
+def build_email_body(important_news: list[tuple[dict, dict]], unsubscribe_url: str = "") -> str:
     """Build a beautiful HTML email body from classified important news items."""
     cards = ""
     for item, classified in important_news:
@@ -146,6 +148,7 @@ def build_email_body(important_news: list[tuple[dict, dict]]) -> str:
                 <tr>
                     <td style="background:#f9fafb;border-radius:0 0 16px 16px;padding:16px 24px;text-align:center;border-top:1px solid #e5e7eb;">
                         <p style="margin:0;font-size:12px;color:#9ca3af;">This email was generated automatically by News Tracker — AI-classified market impact analysis.</p>
+                        {f'<p style="margin:8px 0 0;font-size:12px;"><a href="{unsubscribe_url}" style="color:#9ca3af;text-decoration:underline;">Unsubscribe</a></p>' if unsubscribe_url else ''}
                     </td>
                 </tr>
             </table>
@@ -165,6 +168,7 @@ def main():
             continue
 
         news = raw_data["data"]
+        logger.debug(f"Fetched {len(news)} news items from {source.value}")
         if source == NewsSource.REPUBLIKA:
             for item in news:
                 item['contentSnippet'] = item.pop('description')
@@ -178,19 +182,38 @@ def main():
             if classified_result.get("is_highly_impactful"):
                 important_news.append((item, classified_result))
             insert_news(item, source=source.value, classified_data=classified_result)
-    targets = ['felix.antony168@gmail.com']
+    base_url = os.getenv("BASE_URL", "http://localhost:8000")
+    subscribers = get_active_subscribers()
+    if not subscribers:
+        logger.info("No active subscribers — skipping email dispatch.")
+        return
     if important_news:
-        email_body = build_email_body(important_news)
-        send_email(
-            subject=f"Daily Stock Market Impactful News — {len(important_news)} article{'s' if len(important_news) > 1 else ''}",
-            body=email_body,
-            to=targets
-        )
+        for subscriber in subscribers:
+            unsubscribe_url = f"{base_url}/unsubscribe?token={subscriber['token']}"
+            email_body = build_email_body(important_news, unsubscribe_url=unsubscribe_url)
+            send_email(
+                subject=f"Daily Stock Market Impactful News — {len(important_news)} article{'s' if len(important_news) > 1 else ''}",
+                body=email_body,
+                to=subscriber["email"],
+            )
     
 
-if __name__ == "__main__":
-    logger.info("Starting news tracker process...")
+
+async def news_polling_loop():
+    """Run the news tracker polling loop as an async background task."""
+    logger.info("Starting news tracker polling loop...")
     while True:
-        main()
+        await asyncio.to_thread(main)
         logger.info("News tracker process completed. Sleeping for 5 minutes...")
-        time.sleep(300)
+        await asyncio.sleep(300)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    polling_task = asyncio.create_task(news_polling_loop())
+    try:
+        yield
+    finally:
+        polling_task.cancel()
+
+
+
