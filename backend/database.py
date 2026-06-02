@@ -1,4 +1,5 @@
-from sqlalchemy import Boolean, Float, String, create_engine, ForeignKey, UniqueConstraint
+from typing import List
+from sqlalchemy import Boolean, Float, String, create_engine, ForeignKey, UniqueConstraint, ARRAY
 from sqlalchemy.orm import mapped_column, Mapped, Session, relationship, declarative_base
 from sqlalchemy.types import Date, Integer
 import datetime
@@ -41,7 +42,10 @@ class ClassifiedNews(Base):
     
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     news_id: Mapped[int] = mapped_column(Integer, ForeignKey("news.id"), nullable=False)
-    is_impactful: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    is_high_impact: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    sentiment: Mapped[str] = mapped_column(String(20), nullable=False)
+    impact_category: Mapped[str] = mapped_column(String(50), nullable=False)
+    affected_sectors: Mapped[List[str]] = mapped_column(ARRAY(String), nullable=False)  # Store as an array of strings
     confidence: Mapped[float] = mapped_column(Float, nullable=False)
     reason: Mapped[str] = mapped_column(String(), nullable=True)
     news: Mapped["News"] = relationship(back_populates="classified_data")
@@ -77,10 +81,16 @@ def insert_news(news: dict, source: str, classified_data: dict):
     with Session(engine) as session:
         try:
             
+            # Map incoming classified_data permissively to canonical DB fields
+            reason_val = classified_data.get("reason") or classified_data.get("reasoning")
+
             classified_info = ClassifiedNews(
-                is_impactful= classified_data["is_highly_impactful"],
-                confidence= classified_data["confidence"],
-                reason= classified_data["reasoning"]
+                is_high_impact=classified_data.get("is_high_impact", False),
+                confidence=classified_data.get("confidence", 0.0),
+                sentiment=classified_data.get("sentiment", "neutral"),
+                impact_category=classified_data.get("impact_category", "none"),
+                affected_sectors=classified_data.get("affected_sectors", []),
+                reason=reason_val,
             )
             logger.debug(f"Classified info: {classified_info}")
 
@@ -100,7 +110,7 @@ def insert_news(news: dict, source: str, classified_data: dict):
             return {"status": "success", "message": "News inserted successfully"}
         except Exception as e:
             session.rollback()
-            logger.error(f"Error occurred while inserting news: {e}")
+            logger.exception(f"Error occurred while inserting news: {e}")
             return {"status": "error", "message": str(e)}
 
 
@@ -112,7 +122,7 @@ def add_subscriber(email: str) -> dict:
             if existing:
                 if existing.is_active:
                     logger.info(f"Subscription attempt for already-active email: {email}")
-                    return {"status": "error", "message": "Email is already subscribed."}
+                    return {"status": "success", "message": "Email is already subscribed."}
                 # Re-activate a previously unsubscribed address
                 existing.is_active = True
                 existing.subscribed_at = datetime.date.today()
@@ -133,7 +143,7 @@ def add_subscriber(email: str) -> dict:
             return {"status": "success", "message": "Subscribed successfully.", "token": token}
         except Exception as e:
             session.rollback()
-            logger.error(f"Error adding subscriber {email}: {e}")
+            logger.exception(f"Error adding subscriber {email}: {e}")
             return {"status": "error", "message": str(e)}
 
 
@@ -153,7 +163,7 @@ def remove_subscriber(token: str) -> dict:
             return {"status": "success", "message": "Unsubscribed successfully.", "email": subscriber.email}
         except Exception as e:
             session.rollback()
-            logger.error(f"Error removing subscriber with token {token}: {e}")
+            logger.exception(f"Error removing subscriber with token {token}: {e}")
             return {"status": "error", "message": str(e)}
 
 

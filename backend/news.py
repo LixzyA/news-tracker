@@ -73,7 +73,10 @@ def classify_news(news: dict) -> dict:
             if attempt == max_retries - 1:
                 logger.error("All classifications attempts failed.")
     return {
-        "is_highly_impactful": False,
+        "is_high_impact": False,
+        "sentiment": "neutral",
+        "impact_category": "none",
+        "affected_sectors": [],
         "reasoning": "Failed to classify news after multiple attempts.",
         "confidence": 0.0
     }
@@ -94,10 +97,14 @@ def send_email(subject: str, body: str, to: str | list[str]):
 
 def build_email_body(important_news: list[tuple[dict, dict]], unsubscribe_url: str = "") -> str:
     """Build a beautiful HTML email body from classified important news items."""
-    cards = ""
+    cards_list: list[str] = []
     for item, classified in important_news:
         confidence_pct = round(classified["confidence"] * 100)
-        reasoning = classified["reasoning"]
+        # Prefer canonical 'reason' but accept legacy 'reasoning'
+        reasoning = classified.get("reason") or classified.get("reasoning", "")
+        sentiment = classified.get("sentiment", "neutral")
+        impact_category = classified.get("impact_category", "none")
+        affected_sectors = classified.get("affected_sectors", [])
         content_snippet = item.get("contentSnippet", "")
         # Truncate snippet for email preview
         if len(content_snippet) > 200:
@@ -105,7 +112,7 @@ def build_email_body(important_news: list[tuple[dict, dict]], unsubscribe_url: s
         image_url = item.get("image", {}).get("small", "")
         date_str = item.get("isoDate", "").split("T")[0]
 
-        cards += f"""
+        cards_list.append(f"""
         <div style="background:#fff;border-radius:12px;border:1px solid #e5e7eb;padding:20px;margin-bottom:16px;box-shadow:0 1px 3px rgba(0,0,0,0.06);">
             <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">
                 <tr>
@@ -123,8 +130,11 @@ def build_email_body(important_news: list[tuple[dict, dict]], unsubscribe_url: s
             </table>
             <div style="margin-top:12px;padding-top:12px;border-top:1px solid #f3f4f6;">
                 <p style="margin:0;font-size:13px;color:#4b5563;line-height:1.5;"><strong style="color:#374151;">Why it matters:</strong> {reasoning}</p>
+                <p style="margin:8px 0 0;font-size:12px;color:#6b7280;line-height:1.4;"><strong>Sentiment:</strong> {sentiment} &nbsp;|&nbsp; <strong>Impact:</strong> {impact_category}</p>
+                {f'<p style="margin:6px 0 0;font-size:12px;color:#6b7280;">Affected sectors: {", ".join(affected_sectors)}</p>' if affected_sectors else ''}
             </div>
-        </div>"""
+        </div>""")
+    cards = "\n".join(cards_list)
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -179,7 +189,7 @@ def main():
                 logger.info(f"News with link '{news_link}' already exists in the database.")
                 continue
             classified_result = classify_news(item)
-            if classified_result.get("is_highly_impactful"):
+            if classified_result.get("is_high_impact"):
                 important_news.append((item, classified_result))
             insert_news(item, source=source.value, classified_data=classified_result)
     base_url = os.getenv("BASE_URL", "http://localhost:8000")
@@ -188,6 +198,9 @@ def main():
         logger.info("No active subscribers — skipping email dispatch.")
         return
     if important_news:
+        logger.debug(f"Found {len(important_news)} highly impactful news articles.")
+        for news in important_news:
+            logger.debug(f"Important news: {news[0]['title']} with classification {news[1]}, link: {news[0]['link']}, snippet: {news[0].get('contentSnippet', '')[:100]}..., image: {news[0].get('image', {}).get('small', '')}, sector: {news[1].get('affected_sectors', [])}")
         for subscriber in subscribers:
             unsubscribe_url = f"{base_url}/unsubscribe?token={subscriber['token']}"
             email_body = build_email_body(important_news, unsubscribe_url=unsubscribe_url)

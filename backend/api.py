@@ -52,6 +52,7 @@ def unsubscribe(token: str = Query(..., description="Unsubscribe token included 
 
     if result["status"] == "error":
         logger.warning(f"Unsubscribe failed for token {token}: {result['message']}")
+        # TODO: return a raw json
         return HTMLResponse(
             content=_render_html(
                 title="Unsubscribe failed",
@@ -63,6 +64,7 @@ def unsubscribe(token: str = Query(..., description="Unsubscribe token included 
         )
 
     email = result.get("email", "your address")
+    # TODO: return a raw json
     return HTMLResponse(
         content=_render_html(
             title="Unsubscribed",
