@@ -1,13 +1,16 @@
 from contextlib import asynccontextmanager
 import json
+from warnings import deprecated
 from fastapi import FastAPI
 import requests
+from _resend import broadcast_email, send_broadcast
 from model import ClassifiedNews, NewsSource
 from database import query_news, insert_news, get_active_subscribers
 from huggingface_hub import InferenceClient
 from logger import setup_logger
 import resend
 import asyncio
+from typing import Any, Dict
 
 import os
 from dotenv import load_dotenv
@@ -16,6 +19,8 @@ client = InferenceClient(api_key=os.getenv("HF_TOKEN"))
 model = os.getenv("LLM_MODEL", "google/gemma-4-26B-A4B-it")
 prompt = open("prompt.txt", "r").read()
 logger = setup_logger(__name__)
+RESEND_UNSUBSCRIBE_URL = "RESEND_UNSUBSCRIBE_URL"
+MAX_NEWS_ITEMS = int(os.getenv("MAX_NEWS_ITEMS", "100"))
 
 def get_news(source: NewsSource, type: str | None = None):
     base_url = f"https://berita-indo-api-next.vercel.app/api/{source.value}"
@@ -28,15 +33,13 @@ def get_news(source: NewsSource, type: str | None = None):
         data = response.json()
         return data
     except Exception as e:
-        print(e)
-        return None
+        raise ValueError(f"Error fetching news from {source.value}: {str(e)}")
     
-def classify_news(news: dict) -> dict:
+def classify_news(news: dict) -> ClassifiedNews:
     """
     Classify whether news will highly impact the stock market.
     """
     if not news.get("contentSnippet"):
-        logger.exception("content snippet / description is missing for news item with link: %s", news.get("link"))
         raise ValueError("content snippet / description is required for classification")
     content_snippet = news["contentSnippet"].lower()
     global model
@@ -58,42 +61,40 @@ def classify_news(news: dict) -> dict:
                 "content": "News snippet: " + content_snippet
             }
         ]
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            completion = client.chat.completions.create(
-                messages=messages,
-                response_format= response_format, # type: ignore
-                model=model,
-            ) # type: ignore
-            structured_data = completion.choices[0].message.content
-            return json.loads(structured_data)
-        except Exception as e:
-            print(f"Classification attempt {attempt + 1} failed: {e}")
-            if attempt == max_retries - 1:
-                logger.error("All classifications attempts failed.")
-    return {
-        "is_high_impact": False,
-        "sentiment": "neutral",
-        "impact_category": "none",
-        "affected_sectors": [],
-        "reasoning": "Failed to classify news after multiple attempts.",
-        "confidence": 0.0
-    }
-
-# TODO: needs a dns verification to send email from custom domain
-def send_email(subject: str, body: str, to: str | list[str]):
-    resend_api_key = os.getenv("RESEND_API_KEY")
+   
     try:
+        completion = client.chat.completions.create(
+            messages=messages,
+            response_format= response_format, # type: ignore
+            model=model,
+        ) 
+        structured_data = completion.choices[0].message.content
+        result = ClassifiedNews(**json.loads(structured_data))
+        return result
+    except Exception as e:
+        logger.error(f"Classification attempt failed: {e}")
+    return ClassifiedNews(
+        is_high_impact=False,
+        reason="Failed to classify news after multiple attempts.",
+        confidence=0.0
+    )
+
+@deprecated("Use send_broadcast with Resend's broadcast API instead for better deliverability and analytics")
+def send_email(subject: str, body: str, to: str | list[str]) -> Dict[str, str]:
+    try:
+        logger.info("Sending email with subject '%s' to %s", subject, to)
         result = resend.Emails.send({
             "from": "Felix <onboarding@mail.felix-antony.com>",
             "to": to,
             "subject": subject,
             "html": body
         })
-        return result
+        if result["id"]:
+            logger.debug(f"Email sent successfully to {to} with subject '{subject}")
+        return {"status": "success", "message": f"Email sent to {to} with subject '{subject}'"}
     except Exception as e:
         logger.error(f"Failed to send email: {e}")
+        return {"status": "error", "message": "Failed to send email"}
 
 def build_email_body(important_news: list[tuple[dict, dict]], unsubscribe_url: str = "") -> str:
     """Build a beautiful HTML email body from classified important news items."""
@@ -158,7 +159,7 @@ def build_email_body(important_news: list[tuple[dict, dict]], unsubscribe_url: s
                 <tr>
                     <td style="background:#f9fafb;border-radius:0 0 16px 16px;padding:16px 24px;text-align:center;border-top:1px solid #e5e7eb;">
                         <p style="margin:0;font-size:12px;color:#9ca3af;">This email was generated automatically by News Tracker — AI-classified market impact analysis.</p>
-                        {f'<p style="margin:8px 0 0;font-size:12px;"><a href="{unsubscribe_url}" style="color:#9ca3af;text-decoration:underline;">Unsubscribe</a></p>' if unsubscribe_url else ''}
+                        {f'<p style="margin:8px 0 0;font-size:12px;"><a href="{{{RESEND_UNSUBSCRIBE_URL}}}" style="color:#9ca3af;text-decoration:underline;">Unsubscribe</a></p>' if unsubscribe_url else ''}
                     </td>
                 </tr>
             </table>
@@ -167,9 +168,10 @@ def build_email_body(important_news: list[tuple[dict, dict]], unsubscribe_url: s
 </body>
 </html>"""
 
-
+# TODO: add a news scraper to scrape the content of the news rather than relying on snippet
+# TODO: add bloomberg technoz
 def main():
-    important_news: list[tuple[dict, dict]] = []
+    important_news: list[tuple[dict, Any]] = []
     for source in NewsSource:
         logger.info(f"Fetching news from {source.value}...")
         raw_data = get_news(source)
@@ -177,41 +179,55 @@ def main():
             logger.warning(f"No data found for {source.value}")
             continue
 
-        news = raw_data["data"]
-        logger.debug(f"Fetched {len(news)} news items from {source.value}")
+        news = raw_data["data"][:MAX_NEWS_ITEMS]
+        logger.info(f"Fetched {len(news)} news items from {source.value}")
         if source == NewsSource.REPUBLIKA:
             for item in news:
                 item['contentSnippet'] = item.pop('description')
 
-        for item in news[:10]:  
-            news_link = item["link"]
-            if query_news(news_link):
-                logger.info(f"News with link '{news_link}' already exists in the database.")
-                continue
-            classified_result = classify_news(item)
-            if classified_result.get("is_high_impact"):
-                important_news.append((item, classified_result))
-            insert_news(item, source=source.value, classified_data=classified_result)
+        for item in news:
+            try:
+                news_link = item.get("link")
+                news_in_db = query_news(news_link)
+                if news_in_db:
+                    logger.debug(f"News with link '{news_link}' already exists in the database.")
+                    continue
+        
+                logger.debug(f"Classifying news {item}")
+
+                classified_result = classify_news(item).model_dump()
+                if classified_result.get("is_high_impact"):
+                    important_news.append((item, classified_result))
+                insert_news(item, source=source.value, classified_data=classified_result)
+            except ValueError as ve:
+                if ve.args and "content snippet / description is required" in ve.args[0]:
+                    logger.warning(f"Skipping news item with link '{item.get('link', 'N/A')}' due to missing content snippet: {ve}")
+
+            except Exception as e:
+                logger.exception(f"Error processing news item with link '{item.get('link', 'N/A')}': {e}")
+    if not important_news:
+        logger.info("No highly impactful news articles found.")
+        return
     base_url = os.getenv("BASE_URL", "http://localhost:8000")
     subscribers = get_active_subscribers()
     if not subscribers:
         logger.info("No active subscribers — skipping email dispatch.")
         return
-    if important_news:
-        logger.debug(f"Found {len(important_news)} highly impactful news articles.")
-        for news in important_news:
-            logger.debug(f"Important news: {news[0]['title']} with classification {news[1]}, link: {news[0]['link']}, snippet: {news[0].get('contentSnippet', '')[:100]}..., image: {news[0].get('image', {}).get('small', '')}, sector: {news[1].get('affected_sectors', [])}")
-        for subscriber in subscribers:
-            unsubscribe_url = f"{base_url}/unsubscribe?token={subscriber['token']}"
-            email_body = build_email_body(important_news, unsubscribe_url=unsubscribe_url)
-            send_email(
+    logger.info(f"Found {len(important_news)} highly impactful news articles.")
+    for subscriber in subscribers:
+        unsubscribe_url = f"{base_url}/unsubscribe?token={subscriber['token']}"
+        email_body = build_email_body(important_news, unsubscribe_url=unsubscribe_url)
+        try:
+            broadcast_id = broadcast_email(
+                from_email="Felix <onboarding@mail.felix-antony.com>",
                 subject=f"Daily Stock Market Impactful News — {len(important_news)} article{'s' if len(important_news) > 1 else ''}",
-                body=email_body,
-                to=subscriber["email"],
+                html_content=email_body
             )
-    
-
-
+            # Send the broadcast
+            send_broadcast(broadcast_id)
+        except Exception as e:
+            logger.exception(f"Failed to send broadcast email to {subscriber['email']}: {e}")
+        
 async def news_polling_loop():
     """Run the news tracker polling loop as an async background task."""
     logger.info("Starting news tracker polling loop...")

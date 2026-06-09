@@ -1,21 +1,61 @@
-from enum import Enum
-from pydantic import BaseModel, EmailStr, field_validator
+from enum import StrEnum
+from pydantic import BaseModel, field_validator, Field
 
-class NewsSource(Enum):
+class NewsSource(StrEnum):
     CNBC = "cnbc-news"
     CNN = "cnn-news"
     REPUBLIKA = "republika-news"
 
+class Sentiment(StrEnum):
+    POSITIVE = "positive"
+    NEGATIVE = "negative"
+    NEUTRAL = "neutral"
+    MIXED = "mixed"
+
+class ImpactCategory(StrEnum):
+    MACRO = "macro"
+    COMMODITY = "commodity"
+    REGULATORY = "regulatory"
+    CORPORATE = "corporate"
+    GLOBAL = "global"
+    POLITICAL = "political"
+    NONE = "none"
+
+class AffectedSector(StrEnum):
+    FINANCIALS = "financials"
+    ENERGY = "energy"
+    BASIC_MATERIALS = "basic materials"
+    INDUSTRIALS = "industrials"
+    CONSUMER_NON_CYCLICALS = "consumer non-cyclicals"
+    CONSUMER_CYCLICALS = "consumer cyclicals"
+    HEALTHCARE = "healthcare"
+    PROPERTIES_REAL_ESTATE = "properties & real estate"
+    TECHNOLOGY = "technology"
+    INFRASTRUCTURE = "infrastructure"
+    TRANSPORTATION_LOGISTICS = "transportation & logistics"
+
+#TODO: add impact_magnitude
 class ClassifiedNews(BaseModel):
-    model_config = {"extra": "forbid"}
 
     is_high_impact: bool
-    confidence: float
-    # Optional fields with sane defaults so partial responses still validate
-    sentiment: str = "neutral"
-    impact_category: str = "none"
-    affected_sectors: list[str] = []
-    reason: str = ""
+    confidence: float = Field(description="""
+How confident you are in your own classification of this news. Reflects the clarity and unambiguity of the available information, not the magnitude of market impact.
+- 0.9–1.0: The news is explicit and unambiguous — classification is near-certain.
+- 0.7–0.9: Clear signal with minor interpretive uncertainty.
+- 0.5–0.7: Some ambiguity in the text or its market implications.
+- 0.3–0.5: LSignificant uncertainty — the news is vague, incomplete, or context-dependent.
+- 0.0–0.3: Highly uncertain — insufficient information to classify reliably.
+""")
+    sentiment: Sentiment = Field(default=Sentiment.NEUTRAL, description="""Market sentiment from the perspective of IDX impact.
+Sentiment definitions (from the perspective of IDX market impact):
+- positive: likely to increase investor confidence, stock prices, or capital inflows
+- negative: likely to decrease investor confidence, cause sell-offs, or capital outflows
+- neutral: informational only, no directional market bias
+- mixed: contains both positive and negative signals for different sectors (e.g. weak rupiah hurts importers but helps exporters)                                
+""")
+    impact_category: ImpactCategory = Field(default=ImpactCategory.NONE)
+    affected_sectors: list[AffectedSector] = Field(default=[], description="List of sectors affected by the news")
+    reason: str
 
     @field_validator("confidence")
     @classmethod
@@ -23,38 +63,6 @@ class ClassifiedNews(BaseModel):
         if v < 0 or v > 1:
             raise ValueError(f"Confidence must be between 0 and 1, got {v}")
         return v
-
-    @field_validator("sentiment")
-    @classmethod
-    def validate_sentiment(cls, v: str) -> str:
-        valid_sentiments = {"positive", "negative", "neutral", "mixed"}
-        if v not in valid_sentiments:
-            raise ValueError(f"Sentiment must be one of {valid_sentiments}, got '{v}'")
-        return v
-
-    @field_validator("impact_category")
-    @classmethod
-    def validate_impact_category(cls, v: str) -> str:
-        valid_categories = {"macro", "commodity", "regulatory", "corporate", "global", "political", "none"}
-        if v not in valid_categories:
-            raise ValueError(f"Impact category must be one of {valid_categories}, got '{v}'")
-        return v
-
-    @field_validator("affected_sectors")
-    @classmethod
-    def validate_affected_sectors(cls, v: list[str]) -> list[str]:
-        if not isinstance(v, list):
-            raise ValueError(f"Affected sectors must be a list of strings, got {type(v).__name__}")
-        valid_sectors = {"Financials", "Energy", "Basic Materials", "Industrials", "Consumer Non-Cyclicals", "Consumer Cyclicals", "Healthcare", "Properties & Real Estate", "Technology", "Infrastructure", "Transportation & Logistics"}
-        for sector in v:
-            if not isinstance(sector, str):
-                raise ValueError(f"Each affected sector must be a string, got {type(sector).__name__} in list")
-            if sector not in valid_sectors:
-                raise ValueError(f"Affected sector must be one of {valid_sectors}, got '{sector}'")
-        return v
-
-class SubscribeRequest(BaseModel):
-    email: EmailStr
 
 class MessageResponse(BaseModel):
     status: str

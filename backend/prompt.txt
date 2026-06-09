@@ -16,26 +16,18 @@ Special cases:
 - If the snippet is in English about global events, assess the Indonesia-specific transmission channel
 - Rumor/unconfirmed news: classify as True if confirmed would be high impact, but cap confidence at 0.6
 
+Output Rules:
+- Return ONLY a valid JSON object.
+
 Return ONLY a valid JSON object. Do not include markdown code block formatting or any conversational text. Use this exact schema:
 {
   "is_high_impact": true | false,
   "confidence": 0.0–1.0,
   "sentiment": "positive" | "negative" | "neutral" | "mixed",
   "impact_category": "macro" | "commodity" | "regulatory" | "corporate" | "global" | "political" | "none",
-  "affected_sectors": ["Financials", "Energy", "Basic Materials", "Industrials", "Consumer Non-Cyclicals", "Consumer Cyclicals", "Healthcare", "Properties & Real Estate", "Technology", "Infrastructure", "Transportation & Logistics"],
-  "reasoning": "1–2 sentence explanation"
+  "affected_sectors": ["financials", "energy", "basic materials", "industrials", "consumer non-cyclicals", "consumer cyclicals", "healthcare", "properties & real estate", "technology", "infrastructure", "transportation & logistics"],
+  "reason": "1–2 sentence explanation"
 }
-Confidence calibration guide:
-- 0.9–1.0: Direct, quantified market signal (rate decision, earnings, exchange rate data)
-- 0.7–0.9: Strong indirect signal (policy announcement, commodity price move)
-- 0.5–0.7: Plausible impact but speculative or preliminary
-- 0.3–0.5: Weak or highly indirect connection
-- 0.0–0.3: Minimal to no discernible market connection
-Sentiment definitions (from the perspective of IDX market impact):
-- positive: likely to increase investor confidence, stock prices, or capital inflows
-- negative: likely to decrease investor confidence, cause sell-offs, or capital outflows
-- neutral: informational only, no directional market bias
-- mixed: contains both positive and negative signals for different sectors (e.g. weak rupiah hurts importers but helps exporters)
 
 ### EXAMPLE ###
 
@@ -45,8 +37,8 @@ is_high_impact: true
 confidence: 0.88
 sentiment: "positive",
 impact_category: "macro",
-affected_sectors: ["Financials", "Properties & Real Estate"],
-reasoning: "Penetapan suku bunga sesuai konsensus menghilangkan ketidakpastian. Hal ini mendukung sektor-sektor yang sensitif terhadap suku bunga seperti perbankan dan properti."
+affected_sectors: ["financials", "properties & real estate"],
+reason: "Penetapan suku bunga sesuai konsensus menghilangkan ketidakpastian. Hal ini mendukung sektor-sektor yang sensitif terhadap suku bunga seperti perbankan dan properti."
 
 # Negative
 News: Moody's menurunkan outlook sovereign credit Indonesia dari stable menjadi negative.
@@ -54,17 +46,17 @@ is_high_impact: true
 confidence: 0.95
 sentiment: "negative",
 impact_category: "macro",
-affected_sectors: ["Financials", "Properties & Real Estate", "Infrastructure"]
-reasoning: "Penurunan outlook berdaulat meningkatkan biaya pinjaman bagi emiten dan berpotensi memicu capital outflow investor asing dari IDX, yang berdampak paling negatif pada sektor keuangan."
+affected_sectors: ["financials", "properties & real estate", "infrastructure"]
+reason: "Penurunan outlook berdaulat meningkatkan biaya pinjaman bagi emiten dan berpotensi memicu capital outflow investor asing dari IDX, yang berdampak paling negatif pada sektor keuangan."
 
 # Mixed
 News: Rupiah melemah ke Rp17.800/US$, level terlemah sejak 1998.
 is_high_impact: true,
 confidence: 0.93,
-sentiment: mixed,
+sentiment: "mixed",
 impact_category: "macro",
-affected_sectors: ["Energy", "Basic Materials", "Financials", "Technology"],
-Reasoning: "Pelemahan Rupiah yang drastis membebani emiten yang bergantung pada impor atau memiliki utang denominasi USD, namun menguntungkan emiten eksportir komoditas (energi dan mineral) karena pendapatannya berbasis USD."
+affected_sectors: ["energy", "basic materials", "financials", "technology"],
+reason: "Pelemahan Rupiah yang drastis membebani emiten yang bergantung pada impor atau memiliki utang denominasi USD, namun menguntungkan emiten eksportir komoditas (energi dan mineral) karena pendapatannya berbasis USD."
 
 # Neutral + low impact
 News: OJK merilis laporan tahunan stabilitas sektor keuangan 2025.
@@ -73,4 +65,4 @@ confidence: 0.80,
 sentiment: "neutral",
 "impact_category": "regulatory",
 "affected_sectors": [],
-reasoning: "Publikasi rutin tahunan yang bersifat informatif tanpa adanya kebijakan baru, perubahan regulasi yang ketat, ataupun keterbukaan informasi yang dapat menggerakkan arah pasar secara signifikan."
+reason: "Publikasi rutin tahunan yang bersifat informatif tanpa adanya kebijakan baru, perubahan regulasi yang ketat, ataupun keterbukaan informasi yang dapat menggerakkan arah pasar secara signifikan."

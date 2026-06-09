@@ -22,11 +22,11 @@ loggers:
     level: WARNING
     handlers: [console, file]
   uvicorn:
-    level: WARNING
+    level: INFO
     handlers: [console, file]
     propagate: no
   uvicorn.access:
-    level: WARNING
+    level: INFO
     handlers: [console, file]
     propagate: no
 root:

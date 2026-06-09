@@ -6,9 +6,7 @@ import datetime
 import uuid
 from dotenv import load_dotenv
 import os
-from logger import setup_logger
 
-logger = setup_logger(__name__)
 load_dotenv()
 
 DB_USER = os.getenv("user")
@@ -69,18 +67,15 @@ def query_news(link: str) -> News | None:
     try:
         with Session(engine) as session:
             news_list = session.query(News).where(News.link == link).first()
-            if news_list:
-                logger.info(f"Queried news with link '{link}' found in database.")
-                return news_list
+            if not news_list:
+                return None
+            return news_list
     except Exception as e:
-        logger.exception(f"Error occurred while querying news with link '{link}': {e}")
-        raise 
+        raise ValueError(f"Database query error: {str(e)}")
 
-def insert_news(news: dict, source: str, classified_data: dict):
-    logger.debug(f"Inserting news with title '{news['title']}' into database.")
+def insert_news(news: dict, source: str, classified_data: dict) -> None:
     with Session(engine) as session:
         try:
-            
             # Map incoming classified_data permissively to canonical DB fields
             reason_val = classified_data.get("reason") or classified_data.get("reasoning")
 
@@ -92,7 +87,6 @@ def insert_news(news: dict, source: str, classified_data: dict):
                 affected_sectors=classified_data.get("affected_sectors", []),
                 reason=reason_val,
             )
-            logger.debug(f"Classified info: {classified_info}")
 
             new_article = News(
                 title=news["title"],
@@ -104,31 +98,25 @@ def insert_news(news: dict, source: str, classified_data: dict):
                 classified_data=classified_info
             )
             session.add(new_article)
-
             session.commit()
-            logger.debug(f"News with title '{news['title']}' inserted successfully.")
-            return {"status": "success", "message": "News inserted successfully"}
         except Exception as e:
             session.rollback()
-            logger.exception(f"Error occurred while inserting news: {e}")
-            return {"status": "error", "message": str(e)}
+            raise ValueError(f"Error inserting news: {str(e)}")
 
 
-def add_subscriber(email: str) -> dict:
-    """Insert a new active subscriber. Returns an error dict if the email is already subscribed."""
+def add_subscriber(email: str) -> None:
+    """Insert a new active subscriber. Return if the email is already subscribed."""
     with Session(engine) as session:
         try:
             existing = session.query(Subscriber).where(Subscriber.email == email).first()
             if existing:
                 if existing.is_active:
-                    logger.info(f"Subscription attempt for already-active email: {email}")
-                    return {"status": "success", "message": "Email is already subscribed."}
+                    return None  # Already subscribed, no action needed
                 # Re-activate a previously unsubscribed address
                 existing.is_active = True
                 existing.subscribed_at = datetime.date.today()
                 session.commit()
-                logger.info(f"Re-activated subscriber: {email}")
-                return {"status": "success", "message": "Subscription re-activated."}
+                return None
 
             token = str(uuid.uuid4())
             subscriber = Subscriber(
@@ -139,37 +127,29 @@ def add_subscriber(email: str) -> dict:
             )
             session.add(subscriber)
             session.commit()
-            logger.info(f"New subscriber added: {email}")
-            return {"status": "success", "message": "Subscribed successfully.", "token": token}
         except Exception as e:
             session.rollback()
-            logger.exception(f"Error adding subscriber {email}: {e}")
-            return {"status": "error", "message": str(e)}
+            raise ValueError(f"Error adding subscriber {email}: {str(e)}")
 
 
-def remove_subscriber(token: str) -> dict:
-    """Deactivate the subscriber whose unsubscribe token matches. Returns an error dict if not found."""
+def remove_subscriber(token: str) -> None:
+    """Deactivate the subscriber whose unsubscribe token matches. Raises an error if not found."""
     with Session(engine) as session:
         try:
             subscriber = session.query(Subscriber).where(Subscriber.unsubscribe_token == token).first()
             if not subscriber:
-                logger.warning(f"Unsubscribe attempt with unknown token: {token}")
-                return {"status": "error", "message": "Invalid or unknown unsubscribe token."}
+                raise ValueError("Invalid or unknown unsubscribe token.")
             if not subscriber.is_active:
-                return {"status": "success", "message": "Already unsubscribed."}
+                return None  # Already unsubscribed, no action needed
             subscriber.is_active = False
             session.commit()
-            logger.info(f"Subscriber deactivated: {subscriber.email}")
-            return {"status": "success", "message": "Unsubscribed successfully.", "email": subscriber.email}
         except Exception as e:
             session.rollback()
-            logger.exception(f"Error removing subscriber with token {token}: {e}")
-            return {"status": "error", "message": str(e)}
+            raise ValueError(f"Error removing subscriber with token {token}: {str(e)}")
 
 
 def get_active_subscribers() -> list[dict]:
     """Return a list of dicts with 'email' and 'unsubscribe_token' for every active subscriber."""
     with Session(engine) as session:
         rows = session.query(Subscriber).where(Subscriber.is_active == True).all()  # noqa: E712
-        logger.info(f"Retrieved {len(rows)} active subscriber(s).")
         return [{"email": row.email, "token": row.unsubscribe_token} for row in rows]
