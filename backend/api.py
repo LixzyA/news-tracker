@@ -1,14 +1,23 @@
 """FastAPI application exposing subscribe / unsubscribe endpoints for News Tracker."""
 
-from fastapi import FastAPI, Query
+from deprecated import deprecated
+from fastapi import FastAPI, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse
+from pydantic import EmailStr
 
 from database import add_subscriber, remove_subscriber
 from logger import setup_logger
-from model import SubscribeRequest, MessageResponse
+from model import MessageResponse
 from news import lifespan
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+from _resend import *
+
 
 logger = setup_logger(__name__)
+
+limiter = Limiter(key_func=get_remote_address)
 
 app = FastAPI(
     title="News Tracker Subscription API",
@@ -16,67 +25,99 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)  # type: ignore
+
 
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
 
+@limiter.limit("5/minute")
 @app.get("/health", response_model=MessageResponse, tags=["Health"])
-def health_check():
+def health_check(request: Request):
     """Liveness probe — returns 200 OK when the API is running."""
     return {"status": "ok", "message": "News Tracker API is running."}
 
-
+@deprecated
+@limiter.limit("5/hour")
 @app.post("/subscribe", response_model=MessageResponse, tags=["Subscriptions"])
-def subscribe(body: SubscribeRequest):
+def subscribe(request: Request, email: EmailStr):
     """
     Subscribe an email address to the daily market-impact digest.
 
     - Returns **400** if the email is already actively subscribed.
     - Returns **200** on success (new subscription or re-activation).
     """
-    result = add_subscriber(body.email)
-    if result["status"] == "error":
-        logger.warning(f"Subscribe endpoint returned error for {body.email}: {result['message']}")
-        return JSONResponse(status_code=400, content=result)
-    return result
+    add_subscriber(email)
+    logger.info(f"Subscribe request for {email} success")
+    return {"status": "success", "message": "Subscribed successfully."}
 
-
+@deprecated
+@limiter.limit("5/hour")
 @app.get("/unsubscribe", response_class=HTMLResponse, tags=["Subscriptions"])
-def unsubscribe(token: str = Query(..., description="Unsubscribe token included in every digest email")):
+def unsubscribe(request: Request, token: str = Query(..., description="Unsubscribe token included in every digest email")):
     """
     Unsubscribe via a token link.  Renders a simple HTML confirmation page
     so the user gets a human-readable response when clicking the email footer link.
     """
-    result = remove_subscriber(token)
-
-    if result["status"] == "error":
-        logger.warning(f"Unsubscribe failed for token {token}: {result['message']}")
-        # TODO: return a raw json
+    try:
+        remove_subscriber(token)
         return HTMLResponse(
             content=_render_html(
-                title="Unsubscribe failed",
-                heading="❌ Something went wrong",
-                body=result["message"],
-                color="#dc2626",
+                title="Unsubscribed",
+                heading="✅ You've been unsubscribed",
+                body=f"You have been removed from the News Tracker digest. "
+                    "You won't receive any more emails from us.",
+                color="#16a34a",
             ),
-            status_code=400,
+            status_code=200,
         )
+    except HTTPException as e:
+        if e.status_code == 404:
+            return HTMLResponse(
+                content=_render_html(
+                    title="Unsubscribe failed",
+                    heading="❌ Invalid token",
+                    body="The unsubscribe link appears to be invalid. Please check the link and try again.",
+                    color="#dc2626",
+                ),
+                status_code=400,
+            )
+        else:
+            raise e
 
-    email = result.get("email", "your address")
-    # TODO: return a raw json
-    return HTMLResponse(
-        content=_render_html(
-            title="Unsubscribed",
-            heading="✅ You've been unsubscribed",
-            body=f"<strong>{email}</strong> has been removed from the News Tracker digest. "
-                 "You won't receive any more emails from us.",
-            color="#16a34a",
-        ),
-        status_code=200,
-    )
+@app.post("/subscribe/v2", response_model=MessageResponse, tags=["Subscriptions"])
+def subscribe_v2(email: EmailStr):
+    """
+    Subscribe an email address to the daily market-impact digest.
 
+    - Returns **400** if the email is already actively subscribed.
+    - Returns **200** on success (new subscription or re-activation).
+    """
+    contact_id = add_contact(email)
+    segment_id = add_contact_to_segment(contact_id=contact_id, email= email)
 
+    return {
+        "status": "success",
+        "message": f"{email} subscribed successfully"
+    }
+
+@app.post("/unsubscribe/v2", response_model=MessageResponse, tags=["Subscriptions"])
+def unsubscribe_v2(email: EmailStr):
+    """
+    Unsubscribe an email address from the daily market-impact digest.
+
+    - Returns **400** if the email is not found or already unsubscribed.
+    - Returns **200** on success.
+    """
+    contact_id = update_contact(email, unsubscribed=True)
+    segment_id = remove_contact_from_segment(contact_id=contact_id, email=email)
+
+    return {
+        "status": "success",
+        "message": f"{email} unsubscribed successfully"
+    }
 # ---------------------------------------------------------------------------
 # HTML helper
 # ---------------------------------------------------------------------------
